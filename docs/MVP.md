@@ -2,7 +2,7 @@
 
 面向单说话人录音数据集的参考音频搜索网站。管理员通过命令行扫描服务器数据集、提取 IndexTTS2 声学与情绪特征并保存转录文本；公开网站只提供音频与文字检索、筛选、试听、收藏和下载。
 
-> IndexTTS2 是运行必需项。Gradio 搜索服务直接运行在项目虚拟环境中；Node 建库命令仍通过 `MODEL_PYTHON` 指定该环境。模型不可用时不会退回 `prosody-v1`。
+> IndexTTS2 是运行必需项。搜索服务、建库和离线评测全部使用项目 `.venv` 中的 Python；模型不可用时不会退回 `prosody-v1`。
 
 ## 启用真实模型
 
@@ -19,10 +19,10 @@ py -3.11 -m venv .venv
 安装依赖后直接启动 Gradio 单进程服务：
 
 ```powershell
-npm start
+.\.venv\Scripts\python.exe gradio_app.py
 ```
 
-Gradio 与 IndexTTS2 在同一个 Python 进程中运行，不再需要为网页服务配置 `MODEL_PYTHON`。程序会自动使用项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型。建库命令仍由 Node CLI 执行，并通过 `MODEL_PYTHON` 调用同一个 Python 环境。
+Gradio 与 IndexTTS2 在同一个 Python 进程中运行。程序使用项目 `.venv`、项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型。离线建库和评测同样是 Python 程序，不需要 Node.js。
 
 搜索与建库使用 IndexTTS2 的 `retrieval_only` 模式：保留 W2V-BERT、风格/情绪 conditioning encoder、QwenEmotion 和情绪原型矩阵，但不把 GPT-2 生成主干加载到 GPU，并跳过 s2mel、semantic codec、CAMPPlus、BigVGAN 与 TTS 文本前端。该模式只影响模型加载范围，不改变已建立索引的向量格式。
 
@@ -41,26 +41,26 @@ Gradio 与 IndexTTS2 在同一个 Python 进程中运行，不再需要为网页
 ## 环境
 
 - Python 3.10 或 3.11（Gradio Web 服务与 IndexTTS2）
-- Node.js 22.5+（仅建库 CLI 与离线评测）
 - FFmpeg/FFprobe 已加入 PATH
-
-不需要安装 npm 依赖。
 
 ## 建立索引
 
+先停止正在运行的搜索服务，避免建库进程和 Web 进程同时加载模型占用显存。然后在项目根目录执行：
+
 ```powershell
-$env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
-npm run index -- .\test\f5-tts-demo
+.\.venv\Scripts\python.exe index_audio.py "D:\你的音频目录"
 ```
 
-索引保存在 `.data/audio-search.db`。源音频不会被复制、修改或删除。数据集根目录存在 `metadata.csv` 时，按两列 CSV 读取“文件名（可带后缀）,转录文本”，直接写入音频索引；文件名与音频按基本文件名匹配。没有 `metadata.csv`，或某条音频找不到对应行时，使用 faster-whisper `large-v3-turbo` 自动转录。可用 `WHISPER_DEVICE`、`WHISPER_COMPUTE_TYPE` 和 `WHISPER_MODEL` 覆盖。首次自动转录会从 Hugging Face 获取模型权重，需要网络；可将 `WHISPER_MODEL` 设为本地模型目录以离线运行。再次建库时，音频和转录均未变化的条目会跳过；只改动 metadata 文本时复用已提取的音频特征。
+命令会递归扫描目录中的 `.wav`、`.mp3`、`.flac`、`.m4a`、`.aac`、`.ogg`、`.opus`、`.wma`、`.aiff` 和 `.aif` 文件。完成后重新启动 `gradio_app.py`。由于播放文件白名单在服务启动时生成，新增音频必须重启服务后才能试听或下载。
+
+索引保存在 `.data/audio-search.db`。源音频不会被复制、修改或删除。数据集根目录存在 `metadata.csv` 时，按两列 CSV 读取“文件名（可带后缀）,转录文本”，直接写入音频索引；文件名与音频按基本文件名匹配。没有 `metadata.csv`，或某条音频找不到对应行时，使用 faster-whisper `large-v3-turbo` 自动转录。可用 `WHISPER_DEVICE`、`WHISPER_COMPUTE_TYPE` 和 `WHISPER_MODEL` 覆盖。首次自动转录会从 Hugging Face 获取模型权重，需要网络；可将 `WHISPER_MODEL` 设为本地模型目录以离线运行。再次运行同一命令时，音频和转录均未变化的条目会跳过；只改动 metadata 文本时复用已提取的音频特征。建库不会自动删除数据库中已经不存在的旧文件记录。
 
 文字搜索必须在页面上明确选择类型：情绪使用 IndexTTS2 QwenEmotion；发音风格使用“语速、停顿、音量、表现力”等提示词对应的韵律特征，不会把文字映射到 condition embedding；内容使用转录文本的字符片段索引，忽略标点与空格，完整匹配优先。三类搜索互不混用。
 
 ## 启动
 
 ```powershell
-npm start
+.\.venv\Scripts\python.exe gradio_app.py
 ```
 
 浏览器打开 <http://127.0.0.1:7860>。
@@ -78,13 +78,13 @@ npm start
 ```powershell
 $env:PORT=8080
 $env:DB_PATH="D:\audio-index\search.db"
-npm start
+.\.venv\Scripts\python.exe gradio_app.py
 ```
 
 ## 测试
 
 ```powershell
-npm test
+.\.venv\Scripts\python.exe -m unittest discover -s test -p "*_test.py"
 ```
 
 ### F5-TTS demo 检索评测
@@ -92,9 +92,8 @@ npm test
 使用独立数据库建立测试索引，不污染正式数据：
 
 ```powershell
-$env:DB_PATH="$PWD\.data\f5-baseline.db"
-npm run index -- test\f5-tts-demo
-npm run eval:f5
+.\.venv\Scripts\python.exe index_audio.py test\f5-tts-demo --db .data\f5-baseline.db
+.\.venv\Scripts\python.exe scripts\evaluate_f5_demo.py --db .data\f5-baseline.db
 ```
 
 评测采用 leave-one-out，并报告 Recall@1、Recall@3、Recall@5 和 MRR：

@@ -17,7 +17,7 @@
 
 ## 2. 总体架构设计
 
-系统采用 **Gradio 界面与推理服务 + SQLite 存储 + Node.js 离线建库工具**：
+系统采用 **Gradio 界面与推理服务 + SQLite 存储 + Python 离线建库工具**：
 
 ```
 +-----------------------------------------------------------------------+
@@ -45,7 +45,7 @@
 ### 架构核心特性
 - **单进程推理**：Gradio 与 IndexTTS-2 运行在同一 Python 进程，模型按需加载并复用 CUDA 上下文。
 - **检索专用加载**：仅加载 W2V-BERT 与风格/情绪 conditioning 分支；GPT-2 生成主干、s2mel、codec、CAMPPlus 和 BigVGAN 不占用检索服务显存。
-- **SQLite 兼容存储**：Gradio 搜索服务与 Node.js 离线建库工具共享同一数据库格式。
+- **SQLite 兼容存储**：Gradio 搜索服务与 Python 离线建库工具共享同一数据库格式。
 - **强制严格模型契约**：模型不可用时明确报错，不使用基础特征静默替代深度特征。
 
 ---
@@ -115,7 +115,7 @@ IndexTTS-2 情绪原型矩阵 (tts.emo_matrix，每类均值原型)
 搜索结果以整行可选的 Gradio Radio 列表展示，避免表格单元格进入编辑状态。用户选择一项后，Gradio Audio 和 DownloadButton 使用受控的索引文件白名单提供试听与下载，避免任意服务器路径暴露。
 
 ### 4.2 智能增量索引（Incremental Indexing）
-面对上万条大规模音频库，重复建库成本极高。`src/indexer.js` 建立了基于 `(file_size, mtime, feature_version, transcript_source)` 的严格指纹比对机制：
+面对上万条大规模音频库，重复建库成本极高。`index_audio.py` 建立了基于 `(file_size, mtime, feature_version, transcript_source)` 的严格指纹比对机制：
 - 音频与文本均未变更：**完全跳过**，毫秒级跳过；
 - 仅 `metadata.csv` 文本修改：**复用已提取的 3840 维深度特征**，仅更新台词与二元组索引；
 - 音频修改或特征版本升级：重新触发 Python 提取并原子更新 SQLite。
@@ -145,7 +145,6 @@ IndexTTS-2 情绪原型矩阵 (tts.emo_matrix，每类均值原型)
 ## 6. 环境要求与操作指南
 
 ### 6.1 环境准备
-- **Node.js**：`>= 22.5.0`
 - **系统依赖**：`ffmpeg` 与 `ffprobe` 必须在系统 PATH 中
 - **Python**：`3.10` 或 `3.11`（推荐 3.11，已实测适配 RTX 4060 Laptop GPU、CUDA 12.8、PyTorch 2.8+）
 
@@ -160,24 +159,20 @@ py -3.11 -m venv .venv
 
 #### 1. 建立音频库索引
 ```powershell
-# 必须先指定 MODEL_PYTHON 环境变量
-$env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
-npm run index -- "D:\your-audio-dataset"
+.\.venv\Scripts\python.exe index_audio.py "D:\your-audio-dataset"
 ```
-*注：若未配置 `$env:MODEL_PYTHON`，系统将抛出明确异常 `MODEL_PYTHON 未配置，IndexTTS2 不可用` 并中止，杜绝数据污染。*
+*注：建议先停止 Web 服务，建库完成后再重新启动 `gradio_app.py`，避免两个模型进程同时占用显存。新增音频需要重启 Web 服务后才能试听或下载。*
 
 #### 2. 启动 Web 检索服务
 ```powershell
-npm start
+.\.venv\Scripts\python.exe gradio_app.py
 ```
 服务将在本地启动，浏览器访问 `http://127.0.0.1:7860`。
 
 #### 3. 运行自动化评测
 ```powershell
-$env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
-$env:DB_PATH="$PWD\.data\f5-baseline.db"
-npm run index -- test\f5-tts-demo
-npm run eval:f5
+.\.venv\Scripts\python.exe index_audio.py test\f5-tts-demo --db .data\f5-baseline.db
+.\.venv\Scripts\python.exe scripts\evaluate_f5_demo.py --db .data\f5-baseline.db
 ```
 
 ---
