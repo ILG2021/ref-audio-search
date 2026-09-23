@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>参考音频搜索</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>.drop.dragover{border-color:#d85c36;background:#fff3eb;box-shadow:0 0 0 3px #d85c3620}.drop.dragover span{color:#b84220}</style>
 </head>
 <body>
   <main>
@@ -12,7 +13,7 @@
     <section class="search-card">
       <div class="tabs"><button class="active" data-mode="audio">参考音频</button><button data-mode="text">文字描述</button></div>
       <form id="audio-form">
-        <label class="drop"><input id="audio-file" type="file" accept="audio/*" required><span>选择一段查询音频</span><small>系统会比较节奏、停顿、能量与整体声学表达</small></label>
+        <label class="drop"><input id="audio-file" type="file" accept="audio/*" required><span>点击选择或拖入一段查询音频</span><small>系统会比较节奏、停顿、能量与整体声学表达</small></label>
         <button class="primary">搜索相似表达</button>
       </form>
       <form id="text-form" hidden>
@@ -21,7 +22,7 @@
         <textarea id="emotion-text" placeholder="例如：悲伤、失望，但不要愤怒" required></textarea>
         <button class="primary">搜索匹配表达</button>
       </form>
-      <details class="filters"><summary>搜索设置</summary><div class="filter-grid"><label>音频检索目标<select id="search-mode"><option value="mixed">综合：风格 65% + 情绪 35%</option><option value="style">仅发音风格</option><option value="emotion">仅情绪</option></select><small id="mode-help">综合排序分数 = 0.65 × 风格相似度 + 0.35 × 情绪相似度。</small></label><label>返回数量<input id="result-limit" type="number" value="20" min="1" max="100"></label><label>最短时长（秒）<input id="min-duration" type="number" value="0" min="0" step="0.5"></label><label>最长时长（秒）<input id="max-duration" type="number" value="0" min="0" step="0.5"><small>0 表示不限</small></label></div></details>
+      <details class="filters"><summary>搜索设置</summary><div class="filter-grid"><label id="audio-search-mode-setting">音频检索目标<select id="search-mode"><option value="mixed">综合：风格 65% + 情绪 35%</option><option value="style">仅发音风格</option><option value="emotion">仅情绪</option></select><small id="mode-help">综合排序分数 = 0.65 × 风格相似度 + 0.35 × 情绪相似度。</small></label><label>返回数量<input id="result-limit" type="number" value="20" min="1" max="100"></label><label>最短时长（秒）<input id="min-duration" type="number" value="0" min="0" step="0.5"></label><label>最长时长（秒）<input id="max-duration" type="number" value="0" min="0" step="0.5"><small>0 表示不限</small></label></div></details>
     </section>
     <section><div class="result-head"><h2>检索结果</h2><div><button id="favorites-button" class="ghost">查看收藏</button><span id="interpretation"></span></div></div><p id="ranking-explanation" class="ranking-explanation" hidden></p><div id="results" class="results"><p class="empty">输入查询后，结果会出现在这里。</p></div></section>
   </main>

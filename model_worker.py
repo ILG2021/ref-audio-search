@@ -26,8 +26,15 @@ class Models:
         self.torch = torch
         self.torchaudio = torchaudio
         model_dir = Path(os.environ.get("INDEXTTS_MODEL_DIR", project_root / ".models" / "IndexTTS-2"))
+        config_path = model_dir / "config.yaml"
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                f"IndexTTS2 模型不完整，缺少 {config_path}。"
+                "请运行 .\\.venv\\Scripts\\indextts2.exe download --source huggingface "
+                "--model-dir .\\.models\\IndexTTS-2，或设置 INDEXTTS_MODEL_DIR 指向已有模型目录。"
+            )
         self.tts = IndexTTS2(
-            cfg_path=str(model_dir / "config.yaml"),
+            cfg_path=str(config_path),
             model_dir=str(model_dir),
             use_fp16=torch.cuda.is_available(),
             use_cuda_kernel=False,

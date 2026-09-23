@@ -21,6 +21,7 @@ export function findAudioFiles(root) {
 
 export async function indexDirectory(root, onProgress = () => {}, options = {}) {
   if (!modelProvider.status.enabled) throw new Error("MODEL_PYTHON 未配置，IndexTTS2 不可用");
+  await modelProvider.ensureReady();
   const files = findAudioFiles(root);
   const metadata = loadMetadata(root);
   const errors = [];

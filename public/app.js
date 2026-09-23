@@ -74,11 +74,37 @@ document.querySelectorAll(".tabs button").forEach(button => button.addEventListe
   document.querySelectorAll(".tabs button").forEach(item => item.classList.toggle("active", item === button));
   $("#audio-form").hidden = currentMode !== "audio";
   $("#text-form").hidden = currentMode !== "text";
+  $("#audio-search-mode-setting").hidden = currentMode !== "audio";
 }));
 
-$("#audio-file").addEventListener("change", event => {
+const audioDropZone = document.querySelector(".drop");
+const audioFileInput = $("#audio-file");
+
+audioFileInput.addEventListener("change", event => {
   const file = event.target.files[0];
   if (file) document.querySelector(".drop span").textContent = file.name;
+});
+
+for (const eventName of ["dragenter", "dragover"]) {
+  audioDropZone.addEventListener(eventName, event => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    audioDropZone.classList.add("dragover");
+  });
+}
+for (const eventName of ["dragleave", "drop"]) {
+  audioDropZone.addEventListener(eventName, event => {
+    event.preventDefault();
+    audioDropZone.classList.remove("dragover");
+  });
+}
+audioDropZone.addEventListener("drop", event => {
+  const file = event.dataTransfer.files[0];
+  if (!file) return;
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  audioFileInput.files = transfer.files;
+  audioFileInput.dispatchEvent(new Event("change", { bubbles: true }));
 });
 
 function searchSettings() {

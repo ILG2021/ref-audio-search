@@ -25,6 +25,14 @@ npm start
 
 程序会自动使用项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型，不需要配置源码或模型的绝对路径。`MODEL_PYTHON` 所在环境必须能导入 IndexTTS2 的依赖、PyTorch 和 torchaudio。配置后，建库将保存 IndexTTS2 condition tokens 的 mean/std pooling 风格向量、IndexTTS2 emotion vector，以及基础韵律特征。不依赖 FunASR 或 emotion2vec。
 
+模型权重不会随源码自动复制。若 `.models/IndexTTS-2/config.yaml` 等模型文件不存在，先在项目根目录执行：
+
+```powershell
+.\.venv\Scripts\indextts2.exe download --source huggingface --model-dir .\.models\IndexTTS-2
+```
+
+也可以把已有的完整模型目录放到 `.models/IndexTTS-2`，或在运行前用 `INDEXTTS_MODEL_DIR` 指向它。建库会在扫描音频前校验模型；模型未就绪时立即退出，不会为每个音频重复报告同一错误。
+
 当前验证环境为 Python 3.11.16、PyTorch 2.8.0+cu128 和 RTX 4060 Laptop GPU。`indextts2 check` 已确认模型文件、Python 依赖和 CUDA 均可用。
 
 音频搜索可以选择“仅发音风格”“仅情绪”或二者混合。模型启动或提取失败会让建库任务明确失败，不会静默使用基础特征代替。

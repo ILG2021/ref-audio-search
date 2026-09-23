@@ -42,10 +42,14 @@ class ModelProvider {
     });
   }
 
-  async extract(file) {
+  async ensureReady() {
     this.start();
-    if (!this.ready) throw new Error("MODEL_PYTHON 未配置，无法使用真实模型特征");
+    if (!this.ready) throw new Error("MODEL_PYTHON 未配置，IndexTTS2 不可用");
     await this.ready;
+  }
+
+  async extract(file) {
+    await this.ensureReady();
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -54,9 +58,7 @@ class ModelProvider {
   }
 
   async textEmotion(text) {
-    this.start();
-    if (!this.ready) throw new Error("MODEL_PYTHON 未配置，无法使用 QwenEmotion");
-    await this.ready;
+    await this.ensureReady();
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -65,9 +67,7 @@ class ModelProvider {
   }
 
   async transcribe(file) {
-    this.start();
-    if (!this.ready) throw new Error("MODEL_PYTHON 未配置，无法转录音频");
-    await this.ready;
+    await this.ensureReady();
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
