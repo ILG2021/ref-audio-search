@@ -180,7 +180,7 @@ npm run index -- "D:\your-audio-dataset"
 $env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
 npm start
 ```
-服务将在本地启动，浏览器访问 `http://127.0.0.1:4173`。
+服务将在本地启动，浏览器访问 `http://127.0.0.1:7860`。
 
 #### 3. 运行自动化评测
 ```powershell

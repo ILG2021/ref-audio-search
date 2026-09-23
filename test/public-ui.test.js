@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-test("audio-only ranking mode is hidden for text searches", () => {
+test("audio ranking mode is inside the audio form rather than search settings", () => {
   const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-  const app = fs.readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  const audioForm = html.match(/<form id="audio-form">([\s\S]*?)<\/form>/)?.[1] || "";
+  const filters = html.match(/<details class="filters">([\s\S]*?)<\/details>/)?.[1] || "";
 
-  assert.match(html, /id="audio-search-mode-setting">音频检索目标/);
-  assert.match(app, /\$\("#audio-search-mode-setting"\)\.hidden = currentMode !== "audio"/);
+  assert.match(audioForm, /音频检索类型<select id="search-mode"/);
+  assert.doesNotMatch(filters, /id="search-mode"/);
 });
 
 test("emotion text uses the tokenizer single-input path", () => {

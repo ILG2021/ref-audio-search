@@ -2,7 +2,7 @@
 
 面向单说话人录音数据集的参考音频搜索网站。管理员通过命令行扫描服务器数据集、提取 IndexTTS2 声学与情绪特征并保存转录文本；公开网站只提供音频与文字检索、筛选、试听、收藏、反馈和下载。
 
-> IndexTTS2 是运行必需项。未设置 `MODEL_PYTHON` 时，建库和搜索会返回错误，不会退回 `prosody-v1`。
+> IndexTTS2 是运行必需项。Gradio 搜索服务直接运行在项目虚拟环境中；Node 建库命令仍通过 `MODEL_PYTHON` 指定该环境。模型不可用时不会退回 `prosody-v1`。
 
 ## 启用真实模型
 
@@ -16,14 +16,13 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-服务启动前设置：
+安装依赖后直接启动 Gradio 单进程服务：
 
 ```powershell
-$env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
 npm start
 ```
 
-程序会自动使用项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型，不需要配置源码或模型的绝对路径。`MODEL_PYTHON` 所在环境必须能导入 IndexTTS2 的依赖、PyTorch 和 torchaudio。配置后，建库将保存 IndexTTS2 condition tokens 的 mean/std pooling 风格向量、IndexTTS2 emotion vector，以及基础韵律特征。不依赖 FunASR 或 emotion2vec。
+Gradio 与 IndexTTS2 在同一个 Python 进程中运行，不再需要为网页服务配置 `MODEL_PYTHON`。程序会自动使用项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型。建库命令仍由 Node CLI 执行，并通过 `MODEL_PYTHON` 调用同一个 Python 环境。
 
 模型权重不会随源码自动复制。若 `.models/IndexTTS-2/config.yaml` 等模型文件不存在，先在项目根目录执行：
 
@@ -39,7 +38,8 @@ npm start
 
 ## 环境
 
-- Node.js 22.5+
+- Python 3.10 或 3.11（Gradio Web 服务与 IndexTTS2）
+- Node.js 22.5+（仅建库 CLI 与旧版回退服务）
 - FFmpeg/FFprobe 已加入 PATH
 
 不需要安装 npm 依赖。
@@ -61,7 +61,9 @@ npm run index -- .\test\f5-tts-demo
 npm start
 ```
 
-浏览器打开 <http://127.0.0.1:4173>。
+浏览器打开 <http://127.0.0.1:7860>。
+
+当前网页使用 Gradio Blocks：搜索结果显示为表格，点击任意结果行后可在下方试听、下载、收藏或提交相似性反馈。旧版 Node/HTML 服务保留为 `npm run start:legacy`，仅用于迁移期回退。
 
 索引操作只允许管理员在服务器命令行执行，网站不提供建库接口，也不会接受服务器目录路径。
 

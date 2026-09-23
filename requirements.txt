@@ -9,3 +9,7 @@
 faster-whisper==1.2.1
 onnxruntime==1.19.2
 protobuf==3.19.6
+# Gradio 6 requires huggingface-hub 1.x, while IndexTTS2's Transformers build
+# requires huggingface-hub <1. Keep the UI and model dependency sets compatible.
+gradio>=5.0,<6
+huggingface-hub>=0.30,<1

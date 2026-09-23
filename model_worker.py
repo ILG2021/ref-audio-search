@@ -144,22 +144,27 @@ def emit(value):
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
-try:
-    models = Models()
-    emit({"ready": True})
-except Exception as exc:
-    emit({"ready": False, "error": str(exc), "trace": traceback.format_exc()})
-    raise SystemExit(1)
-
-for line in sys.stdin:
+def main():
     try:
-        request = json.loads(line)
-        if request.get("action") == "text_emotion":
-            result = models.text_emotion(request["text"])
-        elif request.get("action") == "transcribe":
-            result = models.transcribe(request["path"])
-        else:
-            result = models.extract(request["path"])
-        emit({"id": request["id"], "result": result})
+        models = Models()
+        emit({"ready": True})
     except Exception as exc:
-        emit({"id": request.get("id"), "error": str(exc), "trace": traceback.format_exc()})
+        emit({"ready": False, "error": str(exc), "trace": traceback.format_exc()})
+        raise SystemExit(1)
+
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            if request.get("action") == "text_emotion":
+                result = models.text_emotion(request["text"])
+            elif request.get("action") == "transcribe":
+                result = models.transcribe(request["path"])
+            else:
+                result = models.extract(request["path"])
+            emit({"id": request["id"], "result": result})
+        except Exception as exc:
+            emit({"id": request.get("id"), "error": str(exc), "trace": traceback.format_exc()})
+
+
+if __name__ == "__main__":
+    main()

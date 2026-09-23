@@ -74,7 +74,6 @@ document.querySelectorAll(".tabs button").forEach(button => button.addEventListe
   document.querySelectorAll(".tabs button").forEach(item => item.classList.toggle("active", item === button));
   $("#audio-form").hidden = currentMode !== "audio";
   $("#text-form").hidden = currentMode !== "text";
-  $("#audio-search-mode-setting").hidden = currentMode !== "audio";
 }));
 
 const audioDropZone = document.querySelector(".drop");

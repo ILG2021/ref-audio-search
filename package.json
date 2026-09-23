@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "start": ".venv\\Scripts\\python.exe gradio_app.py",
+    "start:legacy": "node --disable-warning=ExperimentalWarning src/server.js",
     "index": "node --disable-warning=ExperimentalWarning src/cli.js index",
     "eval:f5": "node --disable-warning=ExperimentalWarning scripts/evaluate_f5_demo.mjs",
     "test": "node --test"
