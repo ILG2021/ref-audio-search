@@ -6,8 +6,6 @@ import os
 import re
 import sqlite3
 import threading
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import gradio as gr
@@ -30,10 +28,6 @@ LIBRARY_STYLE_VALID = None
 LIBRARY_EMOTION_VALID = None
 
 
-def now():
-    return datetime.now(timezone.utc).isoformat()
-
-
 def connect():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
@@ -54,49 +48,58 @@ def load_library():
         signature = library_signature(connection)
     if signature == LIBRARY_SIGNATURE:
         return LIBRARY_ITEMS
-    with LIBRARY_LOCK:
-        with connect() as connection:
-            signature = library_signature(connection)
-            if signature != LIBRARY_SIGNATURE:
-                rows = connection.execute("SELECT * FROM audio_items ORDER BY id").fetchall()
-                LIBRARY_ITEMS = [{**dict(row), "features": json.loads(row["features_json"])} for row in rows]
-                for index, item in enumerate(LIBRARY_ITEMS):
-                    item["_cache_index"] = index
+    with LIBRARY_LOCK, connect() as connection:
+        signature = library_signature(connection)
+        if signature != LIBRARY_SIGNATURE:
+            rows = connection.execute("SELECT * FROM audio_items ORDER BY id").fetchall()
+            LIBRARY_ITEMS = [{**dict(row), "features": json.loads(row["features_json"])} for row in rows]
+            for index, item in enumerate(LIBRARY_ITEMS):
+                item["_cache_index"] = index
 
-                def embedding_matrix(kind):
-                    vectors = [item["features"].get(kind, {}).get("embedding") for item in LIBRARY_ITEMS]
-                    dimension = next((len(vector) for vector in vectors if vector), 0)
-                    matrix = np.zeros((len(vectors), dimension), dtype=np.float32)
-                    valid = np.zeros(len(vectors), dtype=bool)
-                    for index, vector in enumerate(vectors):
-                        if vector is None or len(vector) != dimension:
-                            continue
-                        array = np.asarray(vector, dtype=np.float32)
-                        norm = float(np.linalg.norm(array))
-                        if norm > 1e-12:
-                            matrix[index] = array / norm
-                            valid[index] = True
-                    return matrix, valid
+            def embedding_matrix(kind):
+                vectors = [item["features"].get(kind, {}).get("embedding") for item in LIBRARY_ITEMS]
+                dimension = next((len(vector) for vector in vectors if vector), 0)
+                matrix = np.zeros((len(vectors), dimension), dtype=np.float32)
+                valid = np.zeros(len(vectors), dtype=bool)
+                for index, vector in enumerate(vectors):
+                    if vector is None or len(vector) != dimension:
+                        continue
+                    array = np.asarray(vector, dtype=np.float32)
+                    norm = float(np.linalg.norm(array))
+                    if norm > 1e-12:
+                        matrix[index] = array / norm
+                        valid[index] = True
+                return matrix, valid
 
-                LIBRARY_STYLE, LIBRARY_STYLE_VALID = embedding_matrix("style")
-                LIBRARY_EMOTION, LIBRARY_EMOTION_VALID = embedding_matrix("emotion")
-                # The dense matrices above are the compact runtime copy of the
-                # embeddings. Keeping the original JSON lists as well would
-                # multiply RAM usage for libraries with tens of thousands of files.
-                for item in LIBRARY_ITEMS:
-                    item["features"] = {"prosody": item["features"].get("prosody", {})}
-                LIBRARY_SIGNATURE = signature
+            LIBRARY_STYLE, LIBRARY_STYLE_VALID = embedding_matrix("style")
+            LIBRARY_EMOTION, LIBRARY_EMOTION_VALID = embedding_matrix("emotion")
+            # The dense matrices above are the compact runtime copy of the
+            # embeddings. Keeping the original JSON lists as well would
+            # multiply RAM usage for libraries with tens of thousands of files.
+            for item in LIBRARY_ITEMS:
+                item["features"] = {"prosody": item["features"].get("prosody", {})}
+            LIBRARY_SIGNATURE = signature
     return LIBRARY_ITEMS
 
 
-def load_items(favorites_only=False):
-    with connect() as connection:
-        favorite_rows = connection.execute("SELECT audio_id FROM favorites ORDER BY created_at DESC").fetchall()
-    favorite_order = [row[0] for row in favorite_rows]
-    favorite_ids = set(favorite_order)
-    by_id = {item["id"]: item for item in load_library()}
-    source = (by_id[audio_id] for audio_id in favorite_order if audio_id in by_id) if favorites_only else by_id.values()
-    return [{**item, "favorite": item["id"] in favorite_ids} for item in source]
+def normalize_favorite_ids(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(dict.fromkeys(int(audio_id) for audio_id in value if str(audio_id).isdigit()))
+
+
+def serialize_favorite_ids(value):
+    return json.dumps(normalize_favorite_ids(value), separators=(",", ":"))
+
+
+def load_items(favorite_ids=None):
+    favorites = set(normalize_favorite_ids(favorite_ids))
+    return [{**item, "favorite": item["id"] in favorites} for item in load_library()]
 
 
 def content_candidate_ids(text):
@@ -211,7 +214,11 @@ STYLE_RULES = [
 
 
 def style_search(items, text, limit, minimum, maximum):
-    matched = [(name, dimensions) for pattern, name, dimensions in STYLE_RULES if re.search(pattern, text, re.I)]
+    matched = [
+        (name, dimensions)
+        for pattern, name, dimensions in STYLE_RULES
+        if re.search(pattern, text, re.IGNORECASE)
+    ]
     if not matched:
         raise gr.Error("未识别到发音风格提示词，请使用语速、停顿、音量或表现力描述。")
     target = np.array([.84, .22, .42, .04, .035, .05, 6.0], dtype=np.float32)
@@ -250,36 +257,26 @@ def result_selector(results):
     return gr.Radio(choices=result_choices(results), value=None)
 
 
-def record_event(session_id, query_id, event_type, candidate_id=None, position=None, search_mode=None, payload=None):
-    with connect() as connection:
-        connection.execute("INSERT INTO user_events(session_id,query_id,candidate_id,event_type,position,search_mode,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                           (session_id, query_id, candidate_id, event_type, position, search_mode, json.dumps(payload or {}, ensure_ascii=False), now()))
-
-
-def finish_search(results, session_id, mode, query, explanation):
-    query_id = str(uuid.uuid4())
-    record_event(session_id, query_id, "search", search_mode=mode, payload={"query": query, "resultIds": [item["id"] for item in results]})
-    for position, item in enumerate(results, 1):
-        record_event(session_id, query_id, "impression", item["id"], position, mode, {"score": item.get("score")})
-    return (result_selector(results), results, query_id, explanation, None,
+def finish_search(results, explanation):
+    return (result_selector(results), results, explanation, None,
             "请选择一条结果。", None, gr.DownloadButton(visible=False))
 
 
-def search_audio(file_path, mode_label, limit, minimum, maximum, request: gr.Request):
+def search_audio(file_path, mode_label, limit, minimum, maximum, favorite_ids):
     if not file_path:
         raise gr.Error("请上传一段查询音频。")
     mode = {"综合：风格 65% + 情绪 35%": "mixed", "仅发音风格": "style", "仅情绪": "emotion"}[mode_label]
     query = get_model().extract(file_path)
-    results = model_search(load_items(), query, mode, limit, minimum, maximum)
+    results = model_search(load_items(favorite_ids), query, mode, limit, minimum, maximum)
     explanation = {"mixed": "综合排序：65% 风格 + 35% 情绪", "style": "按发音风格相似度排序", "emotion": "按情绪相似度排序"}[mode]
-    return finish_search(results, request.session_hash, "audio", {"file": Path(file_path).name, "mode": mode}, explanation)
+    return finish_search(results, explanation)
 
 
-def search_text(text, type_label, limit, minimum, maximum, request: gr.Request):
+def search_text(text, type_label, limit, minimum, maximum, favorite_ids):
     text = str(text or "").strip()
     if not text:
         raise gr.Error("请输入搜索文字。")
-    items = load_items()
+    items = load_items(favorite_ids)
     if type_label == "情绪":
         query = get_model().text_emotion(text)
         results = model_search(items, {"emotion": query["emotion"]}, "emotion", limit, minimum, maximum)
@@ -292,7 +289,7 @@ def search_text(text, type_label, limit, minimum, maximum, request: gr.Request):
         candidates = items if candidate_ids is None else [item for item in items if item["id"] in candidate_ids]
         results = content_search(candidates, text, limit, minimum, maximum)
         explanation = "按转录文本匹配，忽略标点和空格"
-    return finish_search(results, request.session_hash, "text", {"text": text, "type": type_label}, explanation)
+    return finish_search(results, explanation)
 
 
 def select_result(index, results):
@@ -304,64 +301,31 @@ def select_result(index, results):
     return item["path"], details, item["id"], gr.DownloadButton(value=item["path"], visible=True)
 
 
-def toggle_favorite(audio_id, results):
+def toggle_favorite(audio_id, results, favorite_ids):
     if audio_id is None:
         raise gr.Error("请先在结果表格中选择一条音频。")
-    with connect() as connection:
-        exists = connection.execute("SELECT 1 FROM favorites WHERE audio_id=?", (audio_id,)).fetchone()
-        if exists:
-            connection.execute("DELETE FROM favorites WHERE audio_id=?", (audio_id,))
-        else:
-            connection.execute("INSERT INTO favorites(audio_id,created_at) VALUES(?,?)", (audio_id, now()))
+    favorite_ids = normalize_favorite_ids(favorite_ids)
+    exists = audio_id in favorite_ids
+    favorite_ids = [item_id for item_id in favorite_ids if item_id != audio_id]
+    if not exists:
+        favorite_ids.insert(0, audio_id)
     for item in results or []:
         if item["id"] == audio_id:
-            item["favorite"] = not bool(exists)
-    return result_selector(results or []), results, "已取消收藏" if exists else "已收藏"
+            item["favorite"] = not exists
+    return (result_selector(results or []), results, serialize_favorite_ids(favorite_ids),
+            "已取消收藏" if exists else "已收藏")
 
 
-def toggle_favorite_in_list(audio_id, results):
-    _, updated, message = toggle_favorite(audio_id, results)
+def toggle_favorite_in_list(audio_id, results, favorite_ids):
+    _, updated, favorite_ids, message = toggle_favorite(audio_id, results, favorite_ids)
     remaining = [item for item in updated if item.get("favorite")]
-    return result_selector(remaining), remaining, message
+    return result_selector(remaining), remaining, favorite_ids, message
 
 
-def feedback(kind, audio_id, query_id, results, request: gr.Request):
-    if audio_id is None:
-        raise gr.Error("请先在结果表格中选择一条音频。")
-    position = next((index for index, item in enumerate(results or [], 1) if item["id"] == audio_id), None)
-    record_event(request.session_hash, query_id, kind, audio_id, position, "gradio")
-    return "反馈已记录，谢谢。"
-
-
-def selected_event(kind, audio_id, query_id, results, request: gr.Request):
-    if audio_id is None:
-        return
-    position = next((index for index, item in enumerate(results or [], 1) if item["id"] == audio_id), None)
-    record_event(request.session_hash, query_id, kind, audio_id, position, "gradio")
-
-
-def similar_feedback(audio_id, query_id, results, request: gr.Request):
-    return feedback("similar", audio_id, query_id, results, request)
-
-
-def different_feedback(audio_id, query_id, results, request: gr.Request):
-    return feedback("different", audio_id, query_id, results, request)
-
-
-def record_play(audio_id, query_id, results, request: gr.Request):
-    return selected_event("play", audio_id, query_id, results, request)
-
-
-def record_download(audio_id, query_id, results, request: gr.Request):
-    return selected_event("download", audio_id, query_id, results, request)
-
-
-def record_pause(audio_id, query_id, results, request: gr.Request):
-    return selected_event("play_pause", audio_id, query_id, results, request)
-
-
-def show_favorites():
-    results = [{**item, "score": None} for item in load_items(True)]
+def show_favorites(favorite_ids):
+    order = normalize_favorite_ids(favorite_ids)
+    by_id = {item["id"]: item for item in load_items(order)}
+    results = [{**by_id[audio_id], "score": None} for audio_id in order if audio_id in by_id]
     return (result_selector(results), results, "收藏列表", None,
             "请选择一条收藏。", None, gr.DownloadButton(visible=False))
 
@@ -369,8 +333,7 @@ def show_favorites():
 def status_text():
     with connect() as connection:
         row = connection.execute("SELECT COUNT(*) count, COALESCE(SUM(duration),0) duration FROM audio_items").fetchone()
-        favorites = connection.execute("SELECT COUNT(*) FROM favorites").fetchone()[0]
-    return f"已索引 {row['count']} 条音频 · {row['duration'] / 3600:.1f} 小时 · {favorites} 个收藏"
+    return f"已索引 {row['count']} 条音频 · {row['duration'] / 3600:.1f} 小时"
 
 
 CSS = """
@@ -386,26 +349,26 @@ def build_result_panel(empty_text):
     audio = gr.Audio(label="试听", interactive=False)
     with gr.Row():
         favorite = gr.Button("收藏／取消收藏")
-        similar = gr.Button("相似")
-        different = gr.Button("不相似")
         download = gr.DownloadButton("下载", visible=False)
     action_status = gr.Markdown()
-    return selector, explanation, details, audio, favorite, similar, different, download, action_status
+    return selector, explanation, details, audio, favorite, download, action_status
 
 
-def wire_result_panel(selector, result_state, query_id_state, selected_id, details, audio,
-                      favorite, similar, different, download, action_status, favorite_handler=toggle_favorite):
+def wire_result_panel(selector, result_state, selected_id, favorite_ids, details, audio,
+                      favorite, download, action_status, favorite_handler=toggle_favorite):
     selector.change(select_result, [selector, result_state], [audio, details, selected_id, download])
-    favorite.click(favorite_handler, [selected_id, result_state], [selector, result_state, action_status])
-    similar.click(similar_feedback, [selected_id, query_id_state, result_state], action_status)
-    different.click(different_feedback, [selected_id, query_id_state, result_state], action_status)
-    audio.play(record_play, [selected_id, query_id_state, result_state], None)
-    audio.pause(record_pause, [selected_id, query_id_state, result_state], None)
-    audio.stop(record_pause, [selected_id, query_id_state, result_state], None)
-    download.click(record_download, [selected_id, query_id_state, result_state], None)
+    favorite.click(favorite_handler, [selected_id, result_state, favorite_ids],
+                   [selector, result_state, favorite_ids, action_status])
 
 
-with gr.Blocks(title="参考音频搜索", css=CSS, fill_width=True) as app:
+with gr.Blocks(
+    title="参考音频搜索",
+    css=CSS,
+    fill_width=True,
+    analytics_enabled=False,
+    delete_cache=(300, 300),
+) as app:
+    favorite_ids = gr.Textbox(value="[]", visible=False)
     gr.Markdown("# 找到对的表达方式", elem_id="title")
     status = gr.Markdown(status_text())
 
@@ -418,47 +381,65 @@ with gr.Blocks(title="参考音频搜索", css=CSS, fill_width=True) as app:
     with gr.Tabs():
         with gr.Tab("音频搜索"):
             audio_results = gr.State([])
-            audio_query_id = gr.State(None)
             audio_selected_id = gr.State(None)
             audio_mode = gr.Dropdown(["综合：风格 65% + 情绪 35%", "仅发音风格", "仅情绪"], value="综合：风格 65% + 情绪 35%", label="音频检索类型")
             audio_input = gr.Audio(type="filepath", sources=["upload"], label="点击或拖入查询音频")
             audio_search_button = gr.Button("搜索相似表达", variant="primary")
             (audio_selector, audio_explanation, audio_details, audio_player, audio_favorite,
-             audio_similar, audio_different, audio_download, audio_action_status) = build_result_panel("上传音频后开始搜索。")
+             audio_download, audio_action_status) = build_result_panel("上传音频后开始搜索。")
 
         with gr.Tab("文字搜索"):
             text_results = gr.State([])
-            text_query_id = gr.State(None)
             text_selected_id = gr.State(None)
             text_type = gr.Dropdown(["情绪", "发音风格", "内容／转录文本"], value="情绪", label="文字搜索类型")
             text_input = gr.Textbox(lines=4, label="文字描述", placeholder="例如：悲伤、失望，但不要愤怒")
             text_search_button = gr.Button("搜索匹配表达", variant="primary")
             (text_selector, text_explanation, text_details, text_player, text_favorite,
-             text_similar, text_different, text_download, text_action_status) = build_result_panel("输入文字后开始搜索。")
+             text_download, text_action_status) = build_result_panel("输入文字后开始搜索。")
 
         with gr.Tab("收藏列表") as favorites_tab:
             favorite_results = gr.State([])
-            favorite_query_id = gr.State(None)
             favorite_selected_id = gr.State(None)
             (favorite_selector, favorite_explanation, favorite_details, favorite_player, favorite_toggle,
-             favorite_similar, favorite_different, favorite_download, favorite_action_status) = build_result_panel("切换到此标签时加载收藏。")
+             favorite_download, favorite_action_status) = build_result_panel("切换到此标签时加载收藏。")
 
-    audio_search_outputs = [audio_selector, audio_results, audio_query_id, audio_explanation,
+    audio_search_outputs = [audio_selector, audio_results, audio_explanation,
                             audio_player, audio_details, audio_selected_id, audio_download]
-    text_search_outputs = [text_selector, text_results, text_query_id, text_explanation,
+    text_search_outputs = [text_selector, text_results, text_explanation,
                            text_player, text_details, text_selected_id, text_download]
-    audio_search_button.click(search_audio, [audio_input, audio_mode, result_limit, min_duration, max_duration], audio_search_outputs)
-    text_search_button.click(search_text, [text_input, text_type, result_limit, min_duration, max_duration], text_search_outputs)
-    favorites_tab.select(show_favorites, outputs=[favorite_selector, favorite_results, favorite_explanation,
+    audio_search_button.click(search_audio, [audio_input, audio_mode, result_limit, min_duration, max_duration, favorite_ids], audio_search_outputs)
+    text_search_button.click(search_text, [text_input, text_type, result_limit, min_duration, max_duration, favorite_ids], text_search_outputs)
+    favorites_tab.select(show_favorites, inputs=favorite_ids, outputs=[favorite_selector, favorite_results, favorite_explanation,
                                                   favorite_player, favorite_details, favorite_selected_id, favorite_download])
 
-    wire_result_panel(audio_selector, audio_results, audio_query_id, audio_selected_id, audio_details, audio_player,
-                      audio_favorite, audio_similar, audio_different, audio_download, audio_action_status)
-    wire_result_panel(text_selector, text_results, text_query_id, text_selected_id, text_details, text_player,
-                      text_favorite, text_similar, text_different, text_download, text_action_status)
-    wire_result_panel(favorite_selector, favorite_results, favorite_query_id, favorite_selected_id, favorite_details,
-                      favorite_player, favorite_toggle, favorite_similar, favorite_different, favorite_download,
-                      favorite_action_status, toggle_favorite_in_list)
+    wire_result_panel(audio_selector, audio_results, audio_selected_id, favorite_ids, audio_details, audio_player,
+                      audio_favorite, audio_download, audio_action_status)
+    wire_result_panel(text_selector, text_results, text_selected_id, favorite_ids, text_details, text_player,
+                      text_favorite, text_download, text_action_status)
+    wire_result_panel(favorite_selector, favorite_results, favorite_selected_id, favorite_ids, favorite_details,
+                      favorite_player, favorite_toggle, favorite_download, favorite_action_status,
+                      toggle_favorite_in_list)
+
+    app.load(
+        None,
+        outputs=favorite_ids,
+        js='() => localStorage.getItem("ref_audio_search_favorites") || "[]"',
+    )
+    favorite_ids.change(
+        None,
+        inputs=favorite_ids,
+        js="""(value) => {
+            try {
+                const parsed = JSON.parse(value || "[]");
+                localStorage.setItem(
+                    "ref_audio_search_favorites",
+                    JSON.stringify(Array.isArray(parsed) ? parsed : [])
+                );
+            } catch (_) {
+                localStorage.setItem("ref_audio_search_favorites", "[]");
+            }
+        }""",
+    )
 
 
 if __name__ == "__main__":

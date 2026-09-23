@@ -33,23 +33,6 @@ export function db() {
       PRIMARY KEY(audio_id, gram)
     );
     CREATE INDEX IF NOT EXISTS idx_content_gram ON content_grams(gram);
-    CREATE TABLE IF NOT EXISTS user_events (
-      id INTEGER PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      query_id TEXT,
-      candidate_id INTEGER,
-      event_type TEXT NOT NULL,
-      position INTEGER,
-      search_mode TEXT,
-      payload_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_events_query ON user_events(query_id);
-    CREATE TABLE IF NOT EXISTS favorites (
-      audio_id INTEGER PRIMARY KEY,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY(audio_id) REFERENCES audio_items(id) ON DELETE CASCADE
-    );
   `);
   const columns = new Set(database.prepare("PRAGMA table_info(audio_items)").all().map(column => column.name));
   if (!columns.has("transcript")) database.exec("ALTER TABLE audio_items ADD COLUMN transcript TEXT NOT NULL DEFAULT ''");
