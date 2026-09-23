@@ -1,5 +1,11 @@
-numpy>=1.24,<3
-scikit-learn>=1.3,<2
-torch>=2.6,<3
-omegaconf>=2.3,<3
-huggingface-hub>=0.24,<2
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# IndexTTS2 is included in this repository and supplies the style, emotion,
+# QwenEmotion, PyTorch and audio-processing dependencies.
+-e ./index-tts
+
+# Automatic transcription for datasets without metadata.csv.
+# These versions keep protobuf compatible with descript-audiotools/IndexTTS2.
+faster-whisper==1.2.1
+onnxruntime==1.19.2
+protobuf==3.19.6

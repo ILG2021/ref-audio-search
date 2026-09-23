@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>参考音频搜索</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header><div class="header-row"><p class="eyebrow">REF AUDIO SEARCH</p><a class="ghost" href="/api/events/export">导出偏好数据</a></div><h1>找到对的表达方式</h1><p id="status">正在读取索引…</p></header>
+    <section class="search-card">
+      <div class="tabs"><button class="active" data-mode="audio">参考音频</button><button data-mode="text">文字描述</button></div>
+      <form id="audio-form">
+        <label class="drop"><input id="audio-file" type="file" accept="audio/*" required><span>选择一段查询音频</span><small>系统会比较节奏、停顿、能量与整体声学表达</small></label>
+        <button class="primary">搜索相似表达</button>
+      </form>
+      <form id="text-form" hidden>
+        <label class="text-type-label">文字搜索类型<select id="text-type"><option value="emotion">情绪</option><option value="style">发音风格</option><option value="content">内容／转录文本</option></select></label>
+        <p id="text-hints" class="text-hints">提示词：开心、悲伤、愤怒、害怕、平静、失望。只描述想要的情绪。</p>
+        <textarea id="emotion-text" placeholder="例如：悲伤、失望，但不要愤怒" required></textarea>
+        <button class="primary">搜索匹配表达</button>
+      </form>
+      <details class="filters"><summary>搜索设置</summary><div class="filter-grid"><label>音频检索目标<select id="search-mode"><option value="mixed">综合：风格 65% + 情绪 35%</option><option value="style">仅发音风格</option><option value="emotion">仅情绪</option></select><small id="mode-help">综合排序分数 = 0.65 × 风格相似度 + 0.35 × 情绪相似度。</small></label><label>返回数量<input id="result-limit" type="number" value="20" min="1" max="100"></label><label>最短时长（秒）<input id="min-duration" type="number" value="0" min="0" step="0.5"></label><label>最长时长（秒）<input id="max-duration" type="number" value="0" min="0" step="0.5"><small>0 表示不限</small></label></div></details>
+    </section>
+    <section><div class="result-head"><h2>检索结果</h2><div><button id="favorites-button" class="ghost">查看收藏</button><span id="interpretation"></span></div></div><p id="ranking-explanation" class="ranking-explanation" hidden></p><div id="results" class="results"><p class="empty">输入查询后，结果会出现在这里。</p></div></section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

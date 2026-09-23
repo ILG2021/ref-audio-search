@@ -1,0 +1,2 @@
+# Example audio files are downloaded on demand from Hugging Face.
+# See indextts/utils/examples_downloader.py

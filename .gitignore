@@ -2,3 +2,12 @@
 .test_deps/
 .inference_deps/
 __pycache__/
+.data/
+.runtime-tools/
+.venv-models/
+.models/
+.python/
+.uv-cache/
+.hf-cache/
+.runtime-state/
+.uv-cache/
