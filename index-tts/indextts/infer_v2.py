@@ -36,7 +36,7 @@ class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
             use_cuda_kernel=None,use_deepspeed=False, use_accel=False, use_torch_compile=False,
-            aux_paths=None
+            aux_paths=None, retrieval_only=False
     ):
         """
         Args:
@@ -50,6 +50,7 @@ class IndexTTS2:
             use_torch_compile (bool): whether to use torch.compile for optimization or not.
             aux_paths (dict | None): pre-downloaded auxiliary model paths from ensure_models_available().
                 If None, downloads are performed automatically.
+            retrieval_only (bool): load only the audio/text retrieval encoders and skip TTS generation modules.
         """
         # Ensure auxiliary models are available
         if aux_paths is None:
@@ -84,12 +85,27 @@ class IndexTTS2:
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
         self.use_accel = use_accel
         self.use_torch_compile = use_torch_compile
+        self.retrieval_only = retrieval_only
 
         self.qwen_emo = QwenEmotion(os.path.join(self.model_dir, self.cfg.qwen_emo_path))
 
         self.gpt = UnifiedVoice(**self.cfg.gpt, use_accel=self.use_accel)
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
         load_checkpoint(self.gpt, self.gpt_path)
+        if self.retrieval_only:
+            # get_conditioning() and get_emovec() use only the dedicated
+            # conditioning/perceiver stacks and emotion projection layers.
+            # Remove the autoregressive GPT-2 generation trunk before moving
+            # the model to the GPU so it never consumes VRAM.
+            retrieval_unused = (
+                "text_embedding", "mel_embedding", "gpt", "mel_pos_embedding",
+                "text_pos_embedding", "mel_layer_pos_embedding", "text_layer_pos_embedding",
+                "mel_solo_embedding", "text_solo_embedding", "final_norm",
+                "text_head", "mel_head", "speed_emb",
+            )
+            for module_name in retrieval_unused:
+                if hasattr(self.gpt, module_name):
+                    delattr(self.gpt, module_name)
         self.gpt = self.gpt.to(self.device)
         if self.use_fp16:
             self.gpt.eval().half()
@@ -104,7 +120,8 @@ class IndexTTS2:
                 use_deepspeed = False
                 print(f">> Failed to load DeepSpeed. Falling back to normal inference. Error: {e}")
 
-        self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
+        if not self.retrieval_only:
+            self.gpt.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=True, half=self.use_fp16)
 
         if self.use_cuda_kernel:
             # preload the CUDA kernel for BigVGAN
@@ -127,6 +144,15 @@ class IndexTTS2:
         self.semantic_model.eval()
         self.semantic_mean = self.semantic_mean.to(self.device)
         self.semantic_std = self.semantic_std.to(self.device)
+
+        if self.retrieval_only:
+            emo_matrix = torch.load(os.path.join(self.model_dir, self.cfg.emo_matrix))
+            self.emo_num = list(self.cfg.emo_num)
+            self.emo_matrix = torch.split(emo_matrix.to(self.device), self.emo_num)
+            self.gr_progress = None
+            self.model_version = self.cfg.version if hasattr(self.cfg, "version") else None
+            print(">> Retrieval-only mode: skipped GPT-2 generation, semantic codec, s2mel, CAMPPlus, BigVGAN and text frontend")
+            return
 
         semantic_codec = build_semantic_codec(self.cfg.semantic_codec)
         semantic_code_ckpt = aux_paths["semantic_codec"]

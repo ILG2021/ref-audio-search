@@ -38,6 +38,7 @@ class Models:
             model_dir=str(model_dir),
             use_fp16=torch.cuda.is_available(),
             use_cuda_kernel=False,
+            retrieval_only=True,
         )
         self.whisper = None
 

@@ -12,30 +12,30 @@
 4. **缺乏数据反馈闭环**：用户对检索结果的满意度无法量化沉淀，无法进一步迭代检索排序。
 
 ### 1.2 系统定位
-本项目为面向单说话人及专业配音数据集构建的**工业级多模态参考音频检索系统（Ref Audio Search）**。系统深度集成 **IndexTTS-2** 声学与情感表征提取能力以及 **QwenEmotion** 语义情绪对齐能力，配合极简轻量、零外部 npm 依赖的高性能 Node.js 原生后端与本地 SQLite 数据库，提供安全、高效、开箱即用的参考音频检索与偏好数据闭环能力。
+本项目为面向单说话人及专业配音数据集构建的**多模态参考音频检索系统（Ref Audio Search）**。系统深度集成 **IndexTTS-2** 声学与情感表征提取能力以及 **QwenEmotion** 语义情绪对齐能力，以 Gradio 提供单进程 Python 搜索界面，并使用本地 SQLite 数据库存储索引和偏好数据。
 
 ---
 
 ## 2. 总体架构设计
 
-系统采用 **轻量 BFF 服务 + 原生 SQLite 存储 + Python 模型推理引擎** 的三层解耦架构：
+系统采用 **Gradio 界面与推理服务 + SQLite 存储 + Node.js 离线建库工具**：
 
 ```
 +-----------------------------------------------------------------------+
-|                             Web 前端界面                              |
-|   (原生 HTML5 / ES Modules / CSS3，无 Webpack/Vite，即改即生效)       |
+|                         Gradio Blocks 界面                            |
+|       (上传、文字查询、结果表格、试听、收藏、反馈与导出)              |
 +-----------------------------------┬-----------------------------------+
-                                    │ HTTP / REST / Range Streaming
+                                    │ Python 函数调用
 +-----------------------------------▼-----------------------------------+
-|                        Node.js 检索与调度服务                         |
-|  - HTTP API 网关 (路由、CORS、Byte Range 流式音频传输)                 |
-|  - 检索排序引擎 (内存余弦相似度 / 韵律欧氏距离 / 字符二元组倒排)       |
-|  - 进程间长连接调度 (Stdio JSONL 通信管道)                            |
+|                    Python 检索与 IndexTTS-2 推理                      |
+|  - 音频与文本情绪特征提取                                             |
+|  - 余弦相似度、韵律距离与文本匹配                                     |
+|  - 单进程模型复用，无 Web 服务 IPC                                    |
 +-----------------┬-----------------------------------┬-----------------+
-                  │ 读写 (WAL 模式)                   │ IPC 异步调用
+                  │ 运行时读写                        │ 离线建库
 +-----------------▼-----------------+ +---------------▼-----------------+
 |         本地 SQLite 数据库        | |       Python AI 推理常驻服务    |
-|       (Node 原生 node:sqlite)     | |             (model_worker.py)   |
+|       (Python sqlite3 / WAL)      | |             (model_worker.py)   |
 |  - audio_items (元数据与特征向量) | |  - IndexTTS-2 GPT Conditioning  |
 |  - content_grams (字符二元组索引) | |  - IndexTTS-2 GPT Emotion Vec   |
 |  - favorites (用户收藏状态)       | |  - QwenEmotion (文本情绪对齐)   |
@@ -44,9 +44,10 @@
 ```
 
 ### 架构核心特性
-- **零 npm 依赖与原生性能**：后端运行于 Node.js 22.5+，直接采用内置 `node:sqlite`（DatabaseSync + WAL 模式）实现持久化，杜绝重型 ORM 和外部 C++ 编译依赖。
-- **Stdio JSONL 模型通信**：Python 进程作为长期常驻 Worker 通过标准输入输出进行 JSONL 协议通信，避免 PyTorch 模型与 CUDA 上下文反复冷启动。
-- **强制严格模型契约**：严格禁止静默降级。若未配置有效 `MODEL_PYTHON` 运行环境，建库与模型搜索将即刻阻断并显式报错，确保数据表征纯净。
+- **单进程推理**：Gradio 与 IndexTTS-2 运行在同一 Python 进程，模型按需加载并复用 CUDA 上下文。
+- **检索专用加载**：仅加载 W2V-BERT 与风格/情绪 conditioning 分支；GPT-2 生成主干、s2mel、codec、CAMPPlus 和 BigVGAN 不占用检索服务显存。
+- **SQLite 兼容存储**：Gradio 搜索服务与 Node.js 离线建库工具共享同一数据库格式。
+- **强制严格模型契约**：模型不可用时明确报错，不使用基础特征静默替代深度特征。
 
 ---
 
@@ -111,10 +112,8 @@ IndexTTS-2 情绪原型矩阵 (tts.emo_matrix，每类均值原型)
 
 ## 4. 关键工程实现与细节优化
 
-### 4.1 音频流式分块传输（HTTP 206 Partial Content）
-Web 播放器在长音频试听中频繁进行拖拽进度条操作。系统在 `src/server.js` 中完整实现了标准 HTTP Range 协议：
-- 支持 `bytes=start-end`、`bytes=start-` 及 `bytes=-suffix`；
-- 避免全量读取文件到内存，采用 Node.js 底层 `fs.createReadStream` 分段管道推送，保障超大音频与高并发下的极致内存利用率。
+### 4.1 搜索结果试听与下载
+搜索结果以整行可选的 Gradio Radio 列表展示，避免表格单元格进入编辑状态。用户选择一项后，Gradio Audio 和 DownloadButton 使用受控的索引文件白名单提供试听与下载，避免任意服务器路径暴露。
 
 ### 4.2 智能增量索引（Incremental Indexing）
 面对上万条大规模音频库，重复建库成本极高。`src/indexer.js` 建立了基于 `(file_size, mtime, feature_version, transcript_source)` 的严格指纹比对机制：
@@ -126,11 +125,11 @@ Web 播放器在长音频试听中频繁进行拖拽进度条操作。系统在 
 用户在 Web 界面的所有显隐式行为自动记录进 SQLite `user_events` 表：
 - 搜索请求 ID、查询类型、召回列表与各路候选得分；
 - 候选音频曝光位置（Impression Rank）；
-- 音频播放行为：点击、25%、50%、75% 进度打点、完播率以及暂停点；
+- 音频播放与暂停行为；
 - 收藏/取消收藏、原音频下载；
 - 显式反馈：“相似（点赞）”与“不相似（点踩）”。
 
-管理员可直接在 Web 界面右上角一键导出格式标准的 **JSONL 偏好数据集**，直接用于训练后续的重排序模型（Cross-Encoder / RankNet / DPO）。
+偏好数据保存在 SQLite `user_events` 表中，不向普通用户提供导出入口；管理员可通过离线维护工具导出，用于训练后续的重排序模型（Cross-Encoder / RankNet / DPO）。
 
 ---
 
@@ -177,7 +176,6 @@ npm run index -- "D:\your-audio-dataset"
 
 #### 2. 启动 Web 检索服务
 ```powershell
-$env:MODEL_PYTHON=".\.venv\Scripts\python.exe"
 npm start
 ```
 服务将在本地启动，浏览器访问 `http://127.0.0.1:7860`。
@@ -194,7 +192,7 @@ npm run eval:f5
 
 ## 7. 总结与演进规划
 
-本项目构建了端到端、开箱即用的参考音频搜索基础设施。通过将 **IndexTTS-2 的 Conditioning/EmoVec 深度特征** 与 **轻量高效的 Node.js/SQLite 引擎** 相结合，实现了高性能、高召回的零样本语音检索。
+本项目构建了端到端的参考音频搜索基础设施。通过将 **IndexTTS-2 的 Conditioning/EmoVec 深度特征**、Gradio 交互界面与 SQLite 索引相结合，实现零样本语音检索与偏好数据闭环。
 
 后续重点演进方向：
 1. **多说话人混合检索**：引入 Speaker Diarization 与说话人聚类过滤；

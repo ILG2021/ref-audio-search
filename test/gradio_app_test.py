@@ -1,6 +1,6 @@
 import unittest
 
-from gradio_app import content_search, model_search, style_search, table_rows
+from gradio_app import content_search, model_search, result_choices, style_search
 
 
 def item(item_id, transcript, vector):
@@ -20,11 +20,17 @@ class GradioSearchTests(unittest.TestCase):
         items = [item(1, "今天，天气真好！", [.84, .22, .42, .04, .035, .05, 6])]
         self.assertEqual(content_search(items, "天气 真好", 20, 0, 0)[0]["id"], 1)
 
-    def test_style_results_render_as_table(self):
+    def test_style_results_render_as_selectable_choices(self):
         items = [item(1, "", [.72, .34, .60, .04, .035, .05, 7.5])]
         results, attributes = style_search(items, "缓慢、克制", 20, 0, 0)
         self.assertIn("慢速", attributes)
-        self.assertEqual(table_rows(results)[0][1], 1)
+        self.assertIn("1.wav", result_choices(results)[0])
+
+    def test_opposite_style_descriptions_produce_opposite_rankings(self):
+        quiet = item(1, "", [.84, .22, .42, .020, .020, .05, 6])
+        forceful = item(2, "", [.84, .22, .42, .070, .060, .05, 6])
+        self.assertEqual(style_search([quiet, forceful], "轻声", 10, 0, 0)[0][0]["id"], 1)
+        self.assertEqual(style_search([quiet, forceful], "有力", 10, 0, 0)[0][0]["id"], 2)
 
     def test_model_search_ranks_the_entire_library_before_limiting(self):
         items = []

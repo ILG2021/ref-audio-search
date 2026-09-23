@@ -24,6 +24,8 @@ npm start
 
 Gradio 与 IndexTTS2 在同一个 Python 进程中运行，不再需要为网页服务配置 `MODEL_PYTHON`。程序会自动使用项目内的 `index-tts/` 源码和 `.models/IndexTTS-2/` 模型。建库命令仍由 Node CLI 执行，并通过 `MODEL_PYTHON` 调用同一个 Python 环境。
 
+搜索与建库使用 IndexTTS2 的 `retrieval_only` 模式：保留 W2V-BERT、风格/情绪 conditioning encoder、QwenEmotion 和情绪原型矩阵，但不把 GPT-2 生成主干加载到 GPU，并跳过 s2mel、semantic codec、CAMPPlus、BigVGAN 与 TTS 文本前端。该模式只影响模型加载范围，不改变已建立索引的向量格式。
+
 模型权重不会随源码自动复制。若 `.models/IndexTTS-2/config.yaml` 等模型文件不存在，先在项目根目录执行：
 
 ```powershell
@@ -39,7 +41,7 @@ Gradio 与 IndexTTS2 在同一个 Python 进程中运行，不再需要为网页
 ## 环境
 
 - Python 3.10 或 3.11（Gradio Web 服务与 IndexTTS2）
-- Node.js 22.5+（仅建库 CLI 与旧版回退服务）
+- Node.js 22.5+（仅建库 CLI 与离线评测）
 - FFmpeg/FFprobe 已加入 PATH
 
 不需要安装 npm 依赖。
@@ -63,7 +65,7 @@ npm start
 
 浏览器打开 <http://127.0.0.1:7860>。
 
-当前网页使用 Gradio Blocks：搜索结果显示为表格，点击任意结果行后可在下方试听、下载、收藏或提交相似性反馈。旧版 Node/HTML 服务保留为 `npm run start:legacy`，仅用于迁移期回退。
+当前网页使用 Gradio Blocks：搜索结果显示为表格，点击任意结果行后可在下方试听、下载、收藏或提交相似性反馈。
 
 索引操作只允许管理员在服务器命令行执行，网站不提供建库接口，也不会接受服务器目录路径。
 
@@ -75,7 +77,7 @@ npm start
 - 下载、收藏、取消收藏；
 - 用户明确选择的“相似”和“不相似”。
 
-事件包含会话、查询、候选、位置、搜索模式和时间，可通过页面右上角“导出偏好数据”下载 JSONL。空结果搜索同样会记录。收藏以本机 SQLite 为持久化主记录，同时在当前浏览器的 `localStorage.refAudioFavorites` 保存音频 ID 镜像；收藏与取消收藏成功后会同步更新两处。搜索音频及偏好事件只写入本机 SQLite，不会由本应用发送到外部服务。首次启动模型时，若 IndexTTS2 辅助权重缺失，上游下载模块会访问 Hugging Face 补齐权重；模型文件齐全时无需此下载。
+事件包含会话、查询、候选、位置、搜索模式和时间，仅写入本机 SQLite，不在用户界面提供导出入口。空结果搜索同样会记录。收藏也由本机 SQLite 持久化。首次启动模型时，若 IndexTTS2 辅助权重缺失，上游下载模块会访问 Hugging Face 补齐权重；模型文件齐全时无需此下载。
 
 音频特征搜索采用内存精确扫描，不依赖近似向量索引；内容搜索先用 SQLite 字符二元组索引缩小候选，再核对转录文本。
 
@@ -86,18 +88,6 @@ $env:PORT=8080
 $env:DB_PATH="D:\audio-index\search.db"
 npm start
 ```
-
-## API
-
-- `GET /api/health`：索引状态
-- `POST /api/search/audio`：请求体为音频二进制，`X-Filename` 提供文件名
-- `POST /api/search/text`：`{"type":"emotion","text":"悲伤"}`、`{"type":"style","text":"轻声、快语速"}` 或 `{"type":"content","text":"今天的天气"}`
-- `GET /api/library?favorites=1`：收藏列表
-- `PUT /api/favorites/:id`：更新收藏
-- `POST /api/events`：记录搜索偏好事件
-- `GET /api/events/export`：导出偏好事件 JSONL
-- `GET /api/audio/:id`：支持 Range 的试听流
-- `GET /api/audio/:id/download`：下载源音频
 
 ## 测试
 

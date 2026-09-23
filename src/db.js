@@ -102,58 +102,9 @@ export function listAudio() {
   }));
 }
 
-export function getAudio(id) {
-  const row = db().prepare("SELECT * FROM audio_items WHERE id = ?").get(id);
-  return row ? { ...row, features: JSON.parse(row.features_json) } : null;
-}
-
 export function getAudioByPath(filePath) {
   const row = db().prepare("SELECT * FROM audio_items WHERE path = ?").get(filePath);
   return row ? { ...row, features: JSON.parse(row.features_json) } : null;
-}
-
-export function stats() {
-  const audio = db().prepare("SELECT COUNT(*) count, COALESCE(SUM(duration),0) duration FROM audio_items").get();
-  const favorites = db().prepare("SELECT COUNT(*) count FROM favorites").get().count;
-  const events = db().prepare("SELECT COUNT(*) count FROM user_events").get().count;
-  return { ...audio, favorites, events };
-}
-
-export function addEvent(event) {
-  db().prepare(`INSERT INTO user_events(session_id,query_id,candidate_id,event_type,position,search_mode,payload_json,created_at)
-    VALUES(?,?,?,?,?,?,?,?)`).run(
-      event.sessionId, event.queryId || null, event.candidateId || null, event.eventType,
-      event.position ?? null, event.searchMode || null, JSON.stringify(event.payload || {}), new Date().toISOString()
-    );
-}
-
-export function listEvents() {
-  return db().prepare("SELECT * FROM user_events ORDER BY id").all().map(row => ({
-    id: row.id,
-    sessionId: row.session_id,
-    queryId: row.query_id,
-    candidateId: row.candidate_id,
-    eventType: row.event_type,
-    position: row.position,
-    searchMode: row.search_mode,
-    payload: JSON.parse(row.payload_json),
-    createdAt: row.created_at
-  }));
-}
-
-export function setFavorite(audioId, favorite) {
-  if (favorite) db().prepare("INSERT OR IGNORE INTO favorites(audio_id,created_at) VALUES(?,?)").run(audioId, new Date().toISOString());
-  else db().prepare("DELETE FROM favorites WHERE audio_id=?").run(audioId);
-}
-
-export function listFavorites() {
-  return db().prepare(`SELECT a.* FROM audio_items a JOIN favorites f ON f.audio_id=a.id ORDER BY f.created_at DESC`).all().map(row => ({
-    ...row, features: JSON.parse(row.features_json), favorite: true
-  }));
-}
-
-export function favoriteIds() {
-  return new Set(db().prepare("SELECT audio_id FROM favorites").all().map(row => row.audio_id));
 }
 
 export function removeMissing(existingPaths, rootPath) {
