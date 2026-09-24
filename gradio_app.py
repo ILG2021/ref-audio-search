@@ -1,6 +1,7 @@
 """Single-process Gradio UI for reference-audio search."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -402,6 +403,16 @@ def status_text():
     return f"已索引 {row['count']} 条音频 · {row['duration'] / 3600:.1f} 小时"
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="参考音频搜索 Gradio 服务")
+    parser.add_argument(
+        "--root-path",
+        default=ROOT_PATH,
+        help="反向代理部署的 URL 前缀，例如 /audio-search（默认读取 ROOT_PATH）",
+    )
+    return parser.parse_args(argv)
+
+
 CSS = """
 #title h1 {font-family: Georgia, serif; font-size: 3.2rem; font-weight: 400;}
 .result-list label {padding: 10px 12px !important;}
@@ -511,6 +522,7 @@ with gr.Blocks(
 
 
 if __name__ == "__main__":
+    args = parse_args()
     # Gradio checks allowed paths when serving a selected file. Supplying every
     # one of 50k files makes each click expensive; a deduplicated directory list
     # keeps that check small while retaining the same indexed-library boundary.
@@ -518,7 +530,7 @@ if __name__ == "__main__":
     app.queue(default_concurrency_limit=1).launch(
         server_name="127.0.0.1",
         server_port=PORT,
-        root_path=ROOT_PATH,
+        root_path=args.root_path.strip(),
         show_error=True,
         allowed_paths=allowed_audio,
     )

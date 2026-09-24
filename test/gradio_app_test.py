@@ -1,6 +1,6 @@
 import unittest
 
-from gradio_app import content_search, model_search, result_choices, result_selector, style_search, toggle_favorite
+from gradio_app import content_search, model_search, parse_args, result_choices, result_selector, style_search, toggle_favorite
 
 
 def item(item_id, transcript, vector):
@@ -16,6 +16,9 @@ def item(item_id, transcript, vector):
 
 
 class GradioSearchTests(unittest.TestCase):
+    def test_root_path_command_line_argument(self):
+        self.assertEqual(parse_args(["--root-path", "/audio-search"]).root_path, "/audio-search")
+
     def test_content_search_ignores_punctuation(self):
         items = [item(1, "今天，天气真好！", [.84, .22, .42, .04, .035, .05, 6])]
         self.assertEqual(content_search(items, "天气 真好", 20, 0, 0)[0]["id"], 1)
