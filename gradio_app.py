@@ -422,7 +422,9 @@ def build_result_panel(empty_text):
 
 def wire_result_panel(selector, result_state, selected_id, favorite_ids, details, audio,
                       favorite, download, action_status, favorite_handler=toggle_favorite):
-    selector.change(select_result, [selector, result_state], [audio, details, selected_id, download])
+    # Only a user's selection should load the preview. Updating the result list
+    # to redraw a favorite star must not reload or clear the current audio.
+    selector.input(select_result, [selector, result_state], [audio, details, selected_id, download])
     favorite.click(favorite_handler, [selected_id, result_state, favorite_ids],
                    [selector, result_state, favorite_ids, action_status])
 
