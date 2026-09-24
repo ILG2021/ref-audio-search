@@ -27,10 +27,13 @@ MODEL_LOCK = threading.Lock()
 LIBRARY_LOCK = threading.Lock()
 LIBRARY_SIGNATURE = None
 LIBRARY_ITEMS = []
+LIBRARY_BY_ID = {}
 LIBRARY_STYLE = None
 LIBRARY_EMOTION = None
 LIBRARY_STYLE_VALID = None
 LIBRARY_EMOTION_VALID = None
+LIBRARY_DURATIONS = None
+LIBRARY_PROSODY = None
 
 
 def connect():
@@ -47,7 +50,7 @@ def library_signature(connection):
 
 
 def load_library():
-    global LIBRARY_SIGNATURE, LIBRARY_ITEMS
+    global LIBRARY_SIGNATURE, LIBRARY_ITEMS, LIBRARY_BY_ID, LIBRARY_DURATIONS, LIBRARY_PROSODY
     global LIBRARY_STYLE, LIBRARY_EMOTION, LIBRARY_STYLE_VALID, LIBRARY_EMOTION_VALID
     with connect() as connection:
         signature = library_signature(connection)
@@ -78,11 +81,19 @@ def load_library():
 
             LIBRARY_STYLE, LIBRARY_STYLE_VALID = embedding_matrix("style")
             LIBRARY_EMOTION, LIBRARY_EMOTION_VALID = embedding_matrix("emotion")
+            LIBRARY_DURATIONS = np.fromiter(
+                (item["duration"] for item in LIBRARY_ITEMS), dtype=np.float32, count=len(LIBRARY_ITEMS)
+            )
+            LIBRARY_PROSODY = np.asarray(
+                [item["features"].get("prosody", {}).get("vector", [0] * 7) for item in LIBRARY_ITEMS],
+                dtype=np.float32,
+            )
             # The dense matrices above are the compact runtime copy of the
             # embeddings. Keeping the original JSON lists as well would
             # multiply RAM usage for libraries with tens of thousands of files.
             for item in LIBRARY_ITEMS:
                 item["features"] = {"prosody": item["features"].get("prosody", {})}
+            LIBRARY_BY_ID = {item["id"]: item for item in LIBRARY_ITEMS}
             LIBRARY_SIGNATURE = signature
     return LIBRARY_ITEMS
 
@@ -103,8 +114,14 @@ def serialize_favorite_ids(value):
 
 
 def load_items(favorite_ids=None):
+    # The library cache is immutable between database signature changes. Do not
+    # copy tens of thousands of dictionaries merely to decorate search results.
+    return load_library()
+
+
+def decorate_favorites(items, favorite_ids):
     favorites = set(normalize_favorite_ids(favorite_ids))
-    return [{**item, "favorite": item["id"] in favorites} for item in load_library()]
+    return [{**item, "favorite": item["id"] in favorites} for item in items]
 
 
 def content_candidate_ids(text):
@@ -148,7 +165,10 @@ def filtered(items, minimum, maximum):
 def model_search(items, query, mode, limit, minimum, maximum):
     if items and all("_cache_index" in item for item in items):
         indices = np.fromiter((item["_cache_index"] for item in items), dtype=np.int64, count=len(items))
-        durations = np.fromiter((item["duration"] for item in items), dtype=np.float32, count=len(items))
+        if items is LIBRARY_ITEMS and LIBRARY_DURATIONS is not None:
+            durations = LIBRARY_DURATIONS
+        else:
+            durations = LIBRARY_DURATIONS[indices]
         duration_valid = durations >= float(minimum or 0)
         if float(maximum or 0) > 0:
             duration_valid &= durations <= float(maximum)
@@ -169,18 +189,20 @@ def model_search(items, query, mode, limit, minimum, maximum):
         else:
             scores, eligible = style * .65 + emotion * .35, style_valid | emotion_valid
         eligible &= duration_valid
-        order = np.argsort(-scores, kind="stable")
         count = max(1, min(100, int(limit or 10)))
+        eligible_indices = np.flatnonzero(eligible)
+        if len(eligible_indices) > count:
+            candidate_scores = scores[eligible_indices]
+            top = np.argpartition(candidate_scores, -count)[-count:]
+            order = eligible_indices[top[np.argsort(-candidate_scores[top], kind="stable")]]
+        else:
+            order = eligible_indices[np.argsort(-scores[eligible_indices], kind="stable")]
         results = []
         for position in order:
-            if not eligible[position]:
-                continue
             item = items[int(position)]
             results.append({**item, "score": float(scores[position]),
                             "style_score": float(style[position]) if style_valid[position] else None,
                             "emotion_score": float(emotion[position]) if emotion_valid[position] else None})
-            if len(results) == count:
-                break
         return results
 
     matches = []
@@ -238,6 +260,27 @@ def style_search(items, text, limit, minimum, maximum):
     if "夸张" in names: target[[4, 5]] *= [1.55, 1.30]
     dimensions = sorted({index for _, indices in matched for index in indices})
     scales = np.array([.35, .8, .8, .08, .12, .12, 20], dtype=np.float32)
+    if items and all("_cache_index" in item for item in items) and LIBRARY_PROSODY is not None:
+        indices = np.fromiter((item["_cache_index"] for item in items), dtype=np.int64, count=len(items))
+        vectors = LIBRARY_PROSODY if items is LIBRARY_ITEMS else LIBRARY_PROSODY[indices]
+        durations = LIBRARY_DURATIONS if items is LIBRARY_ITEMS else LIBRARY_DURATIONS[indices]
+        scores = np.exp(-np.sqrt(np.mean(
+            ((target[dimensions] - vectors[:, dimensions]) / scales[dimensions]) ** 2, axis=1
+        )))
+        eligible = durations >= float(minimum or 0)
+        if float(maximum or 0) > 0:
+            eligible &= durations <= float(maximum)
+        eligible_indices = np.flatnonzero(eligible)
+        count = max(1, min(100, int(limit or 10)))
+        if len(eligible_indices) > count:
+            candidate_scores = scores[eligible_indices]
+            top = np.argpartition(candidate_scores, -count)[-count:]
+            order = eligible_indices[top[np.argsort(-candidate_scores[top], kind="stable")]]
+        else:
+            order = eligible_indices[np.argsort(-scores[eligible_indices], kind="stable")]
+        results = [{**items[int(position)], "score": float(scores[position])} for position in order]
+        return results, "、".join(name for name, _ in matched)
+
     matches = []
     for item in filtered(items, minimum, maximum):
         vector = np.asarray(item["features"]["prosody"]["vector"], dtype=np.float32)
@@ -262,7 +305,8 @@ def result_selector(results):
     return gr.Radio(choices=result_choices(results), value=None)
 
 
-def finish_search(results, explanation):
+def finish_search(results, explanation, favorite_ids=None):
+    results = decorate_favorites(results, favorite_ids)
     return (result_selector(results), results, explanation, None,
             "请选择一条结果。", None, gr.DownloadButton(visible=False))
 
@@ -272,16 +316,16 @@ def search_audio(file_path, mode_label, limit, minimum, maximum, favorite_ids):
         raise gr.Error("请上传一段查询音频。")
     mode = {"综合：风格 65% + 情绪 35%": "mixed", "仅发音风格": "style", "仅情绪": "emotion"}[mode_label]
     query = get_model().extract(file_path)
-    results = model_search(load_items(favorite_ids), query, mode, limit, minimum, maximum)
+    results = model_search(load_library(), query, mode, limit, minimum, maximum)
     explanation = {"mixed": "综合排序：65% 风格 + 35% 情绪", "style": "按发音风格相似度排序", "emotion": "按情绪相似度排序"}[mode]
-    return finish_search(results, explanation)
+    return finish_search(results, explanation, favorite_ids)
 
 
 def search_text(text, type_label, limit, minimum, maximum, favorite_ids):
     text = str(text or "").strip()
     if not text:
         raise gr.Error("请输入搜索文字。")
-    items = load_items(favorite_ids)
+    items = load_library()
     if type_label == "情绪":
         query = get_model().text_emotion(text)
         results = model_search(items, {"emotion": query["emotion"]}, "emotion", limit, minimum, maximum)
@@ -291,10 +335,13 @@ def search_text(text, type_label, limit, minimum, maximum, favorite_ids):
         explanation = f"识别到：{attributes}"
     else:
         candidate_ids = content_candidate_ids(text)
-        candidates = items if candidate_ids is None else [item for item in items if item["id"] in candidate_ids]
+        if candidate_ids is None:
+            candidates = items
+        else:
+            candidates = [LIBRARY_BY_ID[audio_id] for audio_id in candidate_ids if audio_id in LIBRARY_BY_ID]
         results = content_search(candidates, text, limit, minimum, maximum)
         explanation = "按转录文本匹配，忽略标点和空格"
-    return finish_search(results, explanation)
+    return finish_search(results, explanation, favorite_ids)
 
 
 def select_result(index, results):
@@ -329,8 +376,11 @@ def toggle_favorite_in_list(audio_id, results, favorite_ids):
 
 def show_favorites(favorite_ids):
     order = normalize_favorite_ids(favorite_ids)
-    by_id = {item["id"]: item for item in load_items(order)}
-    results = [{**by_id[audio_id], "score": None} for audio_id in order if audio_id in by_id]
+    load_library()
+    results = [
+        {**LIBRARY_BY_ID[audio_id], "score": None, "favorite": True}
+        for audio_id in order if audio_id in LIBRARY_BY_ID
+    ]
     return (result_selector(results), results, "收藏列表", None,
             "请选择一条收藏。", None, gr.DownloadButton(visible=False))
 
@@ -448,7 +498,10 @@ with gr.Blocks(
 
 
 if __name__ == "__main__":
-    allowed_audio = [item["path"] for item in load_items() if Path(item["path"]).is_file()]
+    # Gradio checks allowed paths when serving a selected file. Supplying every
+    # one of 50k files makes each click expensive; a deduplicated directory list
+    # keeps that check small while retaining the same indexed-library boundary.
+    allowed_audio = sorted({str(Path(item["path"]).resolve().parent) for item in load_library()})
     app.queue(default_concurrency_limit=1).launch(
         server_name="127.0.0.1",
         server_port=PORT,
