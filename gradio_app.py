@@ -8,6 +8,10 @@ import sqlite3
 import threading
 from pathlib import Path
 
+# Disable Gradio usage analytics before importing it. This process-level flag
+# also covers telemetry initialized outside the Blocks instance.
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+
 import gradio as gr
 import numpy as np
 
@@ -17,6 +21,7 @@ from model_worker import Models
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("DB_PATH", ROOT / ".data" / "audio-search.db")).resolve()
 PORT = int(os.environ.get("PORT", "7860"))
+ROOT_PATH = os.environ.get("ROOT_PATH", "").strip()
 MODEL = None
 MODEL_LOCK = threading.Lock()
 LIBRARY_LOCK = threading.Lock()
@@ -444,4 +449,10 @@ with gr.Blocks(
 
 if __name__ == "__main__":
     allowed_audio = [item["path"] for item in load_items() if Path(item["path"]).is_file()]
-    app.queue(default_concurrency_limit=1).launch(server_name="127.0.0.1", server_port=PORT, show_error=True, allowed_paths=allowed_audio)
+    app.queue(default_concurrency_limit=1).launch(
+        server_name="127.0.0.1",
+        server_port=PORT,
+        root_path=ROOT_PATH,
+        show_error=True,
+        allowed_paths=allowed_audio,
+    )

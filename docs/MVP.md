@@ -81,6 +81,15 @@ $env:DB_PATH="D:\audio-index\search.db"
 .\.venv\Scripts\python.exe gradio_app.py
 ```
 
+反向代理部署在子路径时，可通过 `ROOT_PATH` 指定 URL 前缀（例如 `/audio-search`）：
+
+```powershell
+$env:ROOT_PATH="/audio-search"
+.\.venv\Scripts\python.exe gradio_app.py
+```
+
+应用默认通过 `GRADIO_ANALYTICS_ENABLED=False` 禁用 Gradio 使用情况遥测。
+
 ## 测试
 
 ```powershell
