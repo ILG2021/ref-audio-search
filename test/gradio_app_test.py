@@ -1,6 +1,6 @@
 import unittest
 
-from gradio_app import content_search, model_search, result_choices, style_search
+from gradio_app import content_search, model_search, result_choices, result_selector, style_search, toggle_favorite
 
 
 def item(item_id, transcript, vector):
@@ -25,6 +25,16 @@ class GradioSearchTests(unittest.TestCase):
         results, attributes = style_search(items, "缓慢、克制", 20, 0, 0)
         self.assertIn("慢速", attributes)
         self.assertIn("1.wav", result_choices(results)[0])
+
+    def test_toggling_favorite_preserves_selected_result(self):
+        results = [item(1, "", [.84, .22, .42, .04, .035, .05, 6])]
+        selector, updated, favorite_ids, _ = toggle_favorite(1, results, "[]")
+        self.assertEqual(selector.value, result_choices(updated)[0])
+        self.assertEqual(favorite_ids, "[1]")
+
+    def test_result_selector_can_restore_selection_by_id(self):
+        results = [item(1, "", [.84, .22, .42, .04, .035, .05, 6])]
+        self.assertEqual(result_selector(results, selected_id=1).value, result_choices(results)[0])
 
     def test_opposite_style_descriptions_produce_opposite_rankings(self):
         quiet = item(1, "", [.84, .22, .42, .020, .020, .05, 6])

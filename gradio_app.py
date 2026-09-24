@@ -301,8 +301,13 @@ def result_choices(results):
     return choices
 
 
-def result_selector(results):
-    return gr.Radio(choices=result_choices(results), value=None)
+def result_selector(results, selected_id=None):
+    choices = result_choices(results)
+    selected_index = next(
+        (index for index, item in enumerate(results) if item["id"] == selected_id), None
+    )
+    selected_value = choices[selected_index] if selected_index is not None else None
+    return gr.Radio(choices=choices, value=selected_value, type="index")
 
 
 def finish_search(results, explanation, favorite_ids=None):
@@ -346,7 +351,10 @@ def search_text(text, type_label, limit, minimum, maximum, favorite_ids):
 
 def select_result(index, results):
     if index is None or not results:
-        return None, "请选择一条结果。", None, gr.DownloadButton(visible=False)
+        # A result list refresh (for example after toggling a favorite) may
+        # briefly report no selection. Keep the current preview instead of
+        # clearing an audio the user just selected.
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip()
     item = results[int(index)]
     score = "—" if item.get("score") is None else f"{item['score']:.3f}"
     details = f"**{item['name']}**  ·  {item['duration']:.1f} 秒  ·  排序分数 {score}"
@@ -364,7 +372,7 @@ def toggle_favorite(audio_id, results, favorite_ids):
     for item in results or []:
         if item["id"] == audio_id:
             item["favorite"] = not exists
-    return (result_selector(results or []), results, serialize_favorite_ids(favorite_ids),
+    return (result_selector(results or [], selected_id=audio_id), results, serialize_favorite_ids(favorite_ids),
             "已取消收藏" if exists else "已收藏")
 
 
@@ -376,7 +384,10 @@ def toggle_favorite_in_list(audio_id, results, favorite_ids):
 
 def show_favorites(favorite_ids):
     order = normalize_favorite_ids(favorite_ids)
-    load_library()
+    # localStorage contains only compact IDs; resolve their display metadata
+    # from the already-loaded in-memory index without touching SQLite again.
+    if not LIBRARY_BY_ID:
+        load_library()
     results = [
         {**LIBRARY_BY_ID[audio_id], "score": None, "favorite": True}
         for audio_id in order if audio_id in LIBRARY_BY_ID
